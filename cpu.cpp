@@ -421,11 +421,11 @@ void CPU::step(Bus& bus) {
             }
             else if(op == 0x3F){ // CCF
                 F &= 0b10011111;
-                F ^= (1 << 5);
+                F ^= (1 << 4);
             }
             else if(op == 0x37){ // SCF
                 F &= 0b10011111;
-                F |= (1 << 5);
+                F |= (1 << 4);
             }
             else if(op == 0x27){ // DAA (wtf is the point of this)
                 uint8_t correction = 0;
@@ -461,7 +461,38 @@ void CPU::step(Bus& bus) {
             else if(op == 0x2F){ // CPL
                 A = ~A;
                 F |= (1 << 6);
-                F |= (1 << 7);
+                F |= (1 << 5);
+            }
+            // 16-bit arithmetic instructions
+            else if((op & 0b1111) == 0b0011 && (op >> 6) == 0b00){ // INC rr
+                uint16_t operand = read16(st_dst, bus);
+                write16(st_dst, operand + 1, bus);
+            }
+            else if((op & 0b1111) == 0b1011 && (op >> 6) == 0b00){ // DEC rr
+                uint16_t operand = read16(st_dst, bus);
+                write16(st_dst, operand - 1, bus);
+            }
+            else if((op & 0b1111) == 0b1001 && (op >> 6) == 0b00){ // ADD HL, rr
+                uint16_t operand = read16(st_dst, bus);
+                uint32_t result = static_cast<uint32_t>(HL) + static_cast<uint32_t>(operand);
+                bool half_carry = (((HL & 0xFFF) + (operand & 0xFFF)) > 0xFFF);
+                bool full_carry = result > 0xFFFF;
+
+                HL = static_cast<uint16_t>(result);
+                F &= 0x80; // preserve Z; clear N, H, C
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if(op == 0xE8){
+                int8_t e = bus.read8(PC++);
+                uint16_t result = SP + e;
+
+                bool half_carry = ((SP & 0xF) + (e & 0xF) > 0xF);
+                bool full_carry = ((SP & 0xFF) + (e & 0xFF) > 0xFF);
+                SP = result;
+                F = 0;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
             }
             break;
     }           
