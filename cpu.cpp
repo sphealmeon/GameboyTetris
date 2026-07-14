@@ -232,6 +232,237 @@ void CPU::step(Bus& bus) {
                 if(half_carry) F |= 0x20;
                 if(full_carry) F |= 0x10;
             }
+            // 8-bit arithmetic instructions
+            else if((op >> 3) == 0b10000){ // ADD r and ADD (HL)
+                uint8_t operand = read8(src, bus);
+                uint16_t result = static_cast<uint16_t>(A) + static_cast<uint16_t> (operand);
+                bool half_carry = (((A & 0xF) + (read8(src, bus) & 0xF)) > 0xF);
+                bool full_carry = (result > 0xFF);
+
+                A = static_cast<uint8_t>(result);
+                F = 0;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if(op == 0xC6){ // ADD n
+                uint8_t n = bus.read8(PC++);
+                uint16_t result = static_cast<uint16_t>(A) + static_cast<uint16_t> (n);
+                bool half_carry = (((A & 0xF) + (n & 0xF)) > 0xF);
+                bool full_carry = (result > 0xFF);
+
+                A = static_cast<uint8_t>(result);
+                F = 0;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if((op >> 3) == 0b10001){ // ADC r
+                uint8_t operand = read8(src, bus);
+                uint8_t carry_in = (F >> 4) & 0b1;
+                uint16_t result = static_cast<uint16_t> (A) + static_cast<uint16_t> (operand) + (carry_in);
+                bool half_carry = (((A & 0xF) + (operand & 0xF) + (carry_in)) > 0xF);
+                bool full_carry = (result > 0xFF);
+
+                A = static_cast<uint8_t>(result);
+                F = 0;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if(op == 0xCE){ // ADC n
+                uint8_t n = bus.read8(PC++);
+                uint8_t carry_in = (F >> 4) & 0b1;
+                uint16_t result = static_cast<uint16_t> (A) + static_cast<uint16_t> (n) + (carry_in);
+                bool half_carry = (((A & 0xF) + (n & 0xF) + (carry_in)) > 0xF);
+                bool full_carry = (result > 0xFF);
+
+                A = static_cast<uint8_t>(result);
+                F = 0;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if((op >> 3) == 0b10010){ //SUB r and SUB (HL)
+                uint8_t operand = read8(src, bus);
+                uint8_t result = A - operand;
+                bool half_carry = (A & 0xF) < (operand & 0xF);
+                bool full_carry = (A < operand);
+
+                A = result;
+                F = 0x40;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if(op == 0xD6){ // SUB n
+                uint8_t n = bus.read8(PC++);
+                uint8_t result = A - n;
+                bool half_carry = (A & 0xF) < (n & 0xF);
+                bool full_carry = (A < n);
+
+                A = result;
+                F = 0x40;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if((op >> 3) == 0b10011){ // SBC r
+                uint8_t operand = read8(src, bus);
+                uint8_t carry_in = (F >> 4) & 0b1;
+                uint8_t result = A - operand - carry_in;
+
+                bool half_carry = (A & 0xF) < ((operand & 0xF) + carry_in);
+                bool full_carry = A < (static_cast<uint16_t>(operand) + carry_in);
+
+                A = result;
+                F = 0x40;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if(op == 0xDE){ // SBC n
+                uint8_t n = bus.read8(PC++);
+                uint8_t carry_in = (F >> 4) & 0b1;
+                uint8_t result = A - n - carry_in;
+
+                bool half_carry = (A & 0xF) < ((n & 0xF) + carry_in);
+                bool full_carry = A < (static_cast<uint16_t>(n) + carry_in);
+
+                A = result;
+                F = 0x40;
+                if(A == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if((op >> 3) == 0b10111){ // CP r and CP (HL)
+                uint8_t operand = read8(src, bus);
+                uint8_t result = A - operand;
+                bool half_carry = (A & 0xF) < (operand & 0xF);
+                bool full_carry = (A < operand);
+
+                F = 0x40;
+                if(result == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }
+            else if(op == 0xFE) { // CP n
+                uint8_t n = bus.read8(PC++);
+                uint8_t result = A - n;
+                bool half_carry = (A & 0xF) < (n & 0xF);
+                bool full_carry = (A < n);
+
+                F = 0x40;
+                if(result == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+                if(full_carry) F |= 0x10;
+            }  
+            else if((op & 0b111) == 0b100 && (op >> 6) == 0){ // INC r and INC (HL)
+                uint8_t operand = read8(dst, bus);
+                uint8_t result = operand + 1;
+
+                bool half_carry = (operand == 0x0F);
+                write8(dst, result, bus);
+                F = 0;
+                if(result == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+            } 
+            else if((op & 0b111) == 0b101 && (op >> 6) == 0){ // DEC r and DEC (HL)
+                uint8_t operand = read8(dst, bus);
+                uint8_t result = operand - 1;
+
+                bool half_carry = (operand == 0x10);
+                write8(dst, result, bus);
+                F = 0x40;
+                if(result == 0) F |= 0x80;
+                if(half_carry) F |= 0x20;
+            }
+            else if((op >> 3) == 0b10100){ // AND r and AND (HL)
+                uint8_t operand = read8(src, bus);
+                uint8_t result = A & operand;
+                A = result;
+                F = 0x20;
+                if(result == 0) F |= 0x80;
+            }
+            else if(op == 0xE6){ // AND n
+                uint8_t n = bus.read8(PC++);
+                uint8_t result = A & n;
+                A = result;
+                F = 0x20;
+                if(result == 0) F |= 0x80;
+            }
+            else if((op >> 3) == 0b10110){ // OR r and OR (HL)
+                uint8_t operand = read8(src, bus);
+                uint8_t result = A | operand;
+                A = result;
+                F = 0;
+                if(result == 0) F |= 0x80;
+            }
+            else if(op == 0xF6){ // OR n
+                uint8_t n = bus.read8(PC++);
+                uint8_t result = A | n;
+                A = result;
+                F = 0;
+                if(result == 0) F |= 0x80;
+            }
+            else if((op >> 3) == 0b10101){ // XOR r and XOR (HL)
+                uint8_t operand = read8(src, bus);
+                uint8_t result = A ^ operand;
+                A = result;
+                F = 0;
+                if(result == 0) F |= 0x80;
+            }
+            else if(op == 0xEE){ // XOR n
+                uint8_t n = bus.read8(PC++);
+                uint8_t result = A ^ n;
+                A = result;
+                F = 0;
+                if(result == 0) F |= 0x80;
+            }
+            else if(op == 0x3F){ // CCF
+                F &= 0b10011111;
+                F ^= (1 << 5);
+            }
+            else if(op == 0x37){ // SCF
+                F &= 0b10011111;
+                F |= (1 << 5);
+            }
+            else if(op == 0x27){ // DAA (wtf is the point of this)
+                uint8_t correction = 0;
+                bool FLAG_Z = F & (1 << 7);
+                bool FLAG_N = F & (1 << 6);
+                bool FLAG_H = F & (1 << 5);
+                bool FLAG_C = F & (1 << 4);
+
+                if(!FLAG_N){
+                    if(FLAG_H || (A & 0x0F) > 9){
+                        correction |= 0x06;
+                    }
+                    if(FLAG_C || A > 0x99){
+                        correction |= 0x60;
+                        F |= (1 << 4);
+                    }
+                    A += correction;
+                }
+                else{
+                    if(FLAG_H){
+                        correction |= 0x06;
+                    }
+                    if(FLAG_C){
+                        correction |= 0x60;
+                    }
+                    A -= correction;
+                }
+                F &= ~(1 << 5);
+                if(A == 0) F |= (1 << 7);
+                else F &= ~(1 << 7);
+                F &= 0xF0;
+            }
+            else if(op == 0x2F){ // CPL
+                A = ~A;
+                F |= (1 << 6);
+                F |= (1 << 7);
+            }
             break;
     }           
 }
