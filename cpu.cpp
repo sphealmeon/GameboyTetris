@@ -31,6 +31,9 @@ class CPU {
         union { struct{ uint8_t L, H; }; uint16_t HL;
         };
         uint16_t SP, PC;
+        bool IME, IME_next;
+        uint8_t IE, IF;
+        
 
     public:
         void rom_exec();
@@ -41,8 +44,7 @@ class CPU {
         void write8(uint8_t code, uint8_t value, Bus& bus);
         void write16(uint8_t code, uint16_t value, Bus& bus);
         void write16_af(uint8_t code, uint16_t value, Bus& bus);
-        void push(uint16_t value, Bus& bus);
-        uint16_t pop(Bus& bus);
+        uint8_t rstreturn(uint8_t code);
         CPU();
 
 };
@@ -109,6 +111,21 @@ void CPU::write16(uint8_t code, uint16_t value, Bus& bus){
     }
 }
 
+uint8_t CPU::rstreturn(uint8_t code){
+    uint8_t output;
+    switch (code) {
+        case 0b000: output = 0x00; break;
+        case 0b001: output = 0x08; break;
+        case 0b010: output = 0x10; break;
+        case 0b011: output = 0x18; break;
+        case 0b100: output = 0x20; break;
+        case 0b101: output = 0x28; break;
+        case 0b110: output = 0x30; break;
+        case 0b111: output = 0x38; break;
+    }
+    return output;
+}
+
 // PUSH/POP use rr==0b11 for AF instead of SP; low nibble of F is hardwired to 0
 void CPU::write16_af(uint8_t code, uint16_t value, Bus& bus){
     switch (code) {
@@ -124,10 +141,11 @@ void CPU::step(Bus& bus) {
     uint8_t dst = (op >> 3) & 0b111;
     uint8_t src = op & 0b111;
     uint8_t st_dst = (op >> 4) & 0b11; // st = sixteen
+    uint8_t jp = (op >> 3) & 0b11;
 
     switch (op) {
         case 0x76: // HALT (not LD (HL),(HL))
-            // TODO: halt handling
+        // TODO 
             break;
         default:
             // 8-bit load instructions
@@ -494,6 +512,400 @@ void CPU::step(Bus& bus) {
                 if(half_carry) F |= 0x20;
                 if(full_carry) F |= 0x10;
             }
-            break;
-    }           
+            // Rotate, shift, and bit operation instructions
+            else if(op == 0x07){ //RLCA
+                bool b7;
+                if(A >> 7 == 1) b7 = true;
+                else b7 = false;
+
+                A <<= 1;
+                F = 0;
+                if(b7){
+                    A++;
+                    F |= 0x10;
+                }
+            }
+            else if(op == 0x0F){ // RRCA
+                bool b0;
+                if(A & 1 == 1) b0 = true;
+                else b0 = false;
+
+                A >>= 1;
+                F = 0;
+                if(b0){
+                    A += 128;
+                    F |= 0x10;
+                }
+            }
+            else if(op == 0x17){ // RLA
+                bool b7;
+                if(A >> 7 == 1) b7 = true;
+                else b7 = false;
+
+                A <<= 1;
+                if(!(F & (1 << 4))) A++;
+                if(b7) F = 0x10;
+                else F = 0;
+            }
+            else if(op == 0x1F){ // RRA
+                bool b0;
+                if(A & 1 == 1) b0 = true;
+                else b0 = false;
+
+                A >>= 1;
+    
+                if(!(F & (1 << 4))) A += 128;
+                if(b0) F = 0x10;
+                else F = 0;
+            }
+            else if(op == 0xCB){ // A lotta stuff
+                uint8_t cb_op = bus.read8(PC++);
+                uint8_t cb_dst = (cb_op >> 3) & 0b111;
+                uint8_t cb_src = cb_op & 0b111;
+
+                if((cb_op >> 3) == 0){ // RLC r, RLC (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    bool b7 = (operand >> 7) == 1;
+
+                    operand <<= 1;
+                    F = 0;
+                    if(b7){
+                        operand++;
+                        F |= 0x10;
+                    }
+                    if(!operand){
+                        F |= 0x80;
+                    }
+                    write8(cb_src, operand, bus);
+                }
+                else if((cb_op >> 3) == 1){ // RRC r, RRC (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    bool b0 = operand & 1;
+
+                    operand >>= 1;
+                    F = 0;
+                    if(b0){
+                        operand += 128;
+                        F |= 0x10;
+                    }
+                    if(!operand){
+                        F |= 0x80;
+                    }
+                    write8(cb_src, operand, bus);
+                }
+                else if((cb_op >> 3) == 2){ // RL r, RL (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    bool FLAG_C = F & (1 << 4);
+                    bool b7 = (operand >> 7) == 1;
+
+                    operand <<= 1;
+                    F = 0;
+                    if(FLAG_C){
+                        operand++;
+                    }
+                    if(b7){
+                        F |= 0x10;
+                    }
+                    if(!operand){
+                        F |= 0x80;
+                    }
+                    write8(cb_src, operand, bus);
+                } 
+                else if((cb_op >> 3) == 3){ // RR r, RR (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    bool FLAG_C = F & (1 << 4);
+                    bool b0 = operand & 1;
+
+                    operand >>= 1;
+                    F = 0;
+                    if(FLAG_C){
+                        operand += 128;
+                    }
+                    if(b0){
+                        F |= 0x10;
+                    }
+                    if(!operand){
+                        F |= 0x80;
+                    }
+
+                    write8(cb_src, operand, bus);
+                }
+                else if((cb_op >> 3) == 4){ // SLA r, SLA (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    bool b7 = (operand >> 7) == 1;
+                    operand <<= 1;
+
+                    F = 0;
+                    if(b7){
+                        F |= 0x10;
+                    }
+                    if(!operand){
+                        F |= 0x80;
+                    }
+
+                    write8(cb_src, operand, bus);
+                }
+                else if((cb_op >> 3) == 5){ // SRA r, SRA (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    bool b0 = operand & 1;
+                    bool b7 = (operand >> 7) == 1;
+                    operand >>= 1;
+                    if(b7) operand += 128;
+
+                    F = 0;
+                    if(b0){
+                        F |= 0x10;
+                    }
+                    if(!operand){
+                        F |= 0x80;
+                    }
+
+                    write8(cb_src, operand, bus);
+                }
+                else if((cb_op >> 3) == 6){ // SWAP r, SWAP (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    F = 0;
+                    if(!operand) F = 0x80;
+                    uint8_t low_nibble = operand & 0b1111;
+                    uint8_t high_nibble = (operand >> 4) & 0b1111;
+
+                    uint8_t new_operand = ((low_nibble << 4) | high_nibble);
+                    write8(cb_src, new_operand, bus);
+                }
+                else if((cb_op >> 3) == 7){ // SRL r, SRL (HL)
+                    uint8_t operand = read8(cb_src, bus);
+                    bool b0 = operand & 1;
+
+                    operand >>= 1;
+                    F = 0;
+                    if(b0) F |= 0x10;
+                    if(!operand) F |= 0x80;
+
+                    write8(cb_src, operand, bus);
+                }
+                else if((cb_op >> 6) == 1){ // BIT b r, BIT b (HL)
+                    uint8_t bit_val = cb_dst;
+                    uint8_t operand = read8(cb_src, bus);
+                    F &= 0b10111111;
+                    F |= 0x20;
+                    if(!(operand & (1 << bit_val))){
+                        F |= 0x80;
+                    }
+                    else F &= ~(0x80);
+                }
+                else if((cb_op >> 6) == 2){ // RES b r, RES b (HL)
+                    uint8_t bit_val = cb_dst;
+                    uint8_t operand = read8(cb_src, bus);
+
+                    operand &= ~(1 << bit_val);
+
+                    write8(cb_src, operand, bus);
+                }
+                else if((cb_op >> 6) == 3){ // SET b r, SET b (HL)
+                    uint8_t bit_val = cb_dst;
+                    uint8_t operand = read8(cb_src, bus);
+
+                    operand |= (1 << bit_val);
+
+                    write8(cb_src, operand, bus);
+                }
+            }
+            else if(op == 0xC3){ // JP nn
+                uint8_t nn_lsb = bus.read8(PC++);
+                uint8_t nn_msb = bus.read8(PC++);
+
+                uint16_t nn = (static_cast<uint16_t> (nn_msb) << 8) | nn_lsb;
+                PC = nn;
+            }
+            else if(op == 0xE9){ // JP HL
+                PC = HL;
+            }    
+            else if((op & 0b111) == 0b010 && ((op >> 5) & 0b111) == 0b110){ // JP cc, nn
+                bool FLAG_Z;
+                bool FLAG_C;
+
+                if(F & (1 << 4)) FLAG_C = true;
+                else FLAG_C = false;
+                if(F & (1 << 7)) FLAG_Z = true;
+                else FLAG_Z = false;
+
+                uint8_t nn_lsb = bus.read8(PC++);
+                uint8_t nn_msb = bus.read8(PC++);
+
+                uint16_t nn = (static_cast<uint16_t> (nn_msb) << 8) | nn_lsb;
+
+                switch (jp){
+                    case 0: 
+                        if(!FLAG_Z) PC = nn;
+                        break;
+                    case 1:
+                        if(FLAG_Z) PC = nn;
+                        break;
+                    case 2:
+                        if(!FLAG_C) PC = nn;
+                        break;
+                    case 3:
+                        if(FLAG_C) PC = nn;
+                        break;
+                    default:
+                        break;
+                }
+            }
+            else if(op == 0x18){ // JR e
+                int8_t e = bus.read8(PC++);
+                PC += e;
+            }
+            else if((op & 0b111) == 0 && ((op >> 5) & 0b111) == 1){ // JR cc, e
+                bool FLAG_Z;
+                bool FLAG_C;
+
+                if(F & (1 << 4)) FLAG_C = true;
+                else FLAG_C = false;
+                if(F & (1 << 7)) FLAG_Z = true;
+                else FLAG_Z = false;
+
+                int8_t e = bus.read8(PC++);
+
+                switch (jp){
+                    case 0: 
+                        if(!FLAG_Z) PC += e;
+                        break;
+                    case 1:
+                        if(FLAG_Z) PC += e;
+                        break;
+                    case 2:
+                        if(!FLAG_C) PC += e;
+                        break;
+                    case 3:
+                        if(FLAG_C) PC += e;
+                        break;
+                    default:
+                        break;
+                }
+            }
+            else if(op == 0xCD){ // CALL nn
+                uint8_t nn_lsb = bus.read8(PC++);
+                uint8_t nn_msb = bus.read8(PC++);
+
+                uint16_t nn = (static_cast<uint16_t> (nn_msb) << 8) | nn_lsb;
+
+                bus.write8(--SP, static_cast<uint8_t>(PC >> 8));
+                bus.write8(--SP, static_cast<uint8_t>(PC & 0xFF));
+                PC = nn;
+            }
+            else if((op & 0b111) == 4 && ((op >> 5) & 0b111) == 6){ // CALL cc, nn
+                bool FLAG_Z;
+                bool FLAG_C;
+
+                if(F & (1 << 4)) FLAG_C = true;
+                else FLAG_C = false;
+                if(F & (1 << 7)) FLAG_Z = true;
+                else FLAG_Z = false;
+                uint8_t nn_lsb = bus.read8(PC++);
+                uint8_t nn_msb = bus.read8(PC++);
+
+                uint16_t nn = (static_cast<uint16_t> (nn_msb) << 8) | nn_lsb;
+                switch (jp){
+                    case 0: 
+                        if(!FLAG_Z){
+                            bus.write8(--SP, static_cast<uint8_t>(PC >> 8));
+                            bus.write8(--SP, static_cast<uint8_t>(PC & 0xFF));
+                            PC = nn;
+                        }
+                        break;
+                    case 1:
+                        if(FLAG_Z){
+                            bus.write8(--SP, static_cast<uint8_t>(PC >> 8));
+                            bus.write8(--SP, static_cast<uint8_t>(PC & 0xFF));
+                            PC = nn;
+                        }
+                        break;
+                    case 2:
+                        if(!FLAG_C){
+                            bus.write8(--SP, static_cast<uint8_t>(PC >> 8));
+                            bus.write8(--SP, static_cast<uint8_t>(PC & 0xFF));
+                            PC = nn;
+                        }
+                        break;
+                    case 3:
+                        if(FLAG_C){
+                            bus.write8(--SP, static_cast<uint8_t>(PC >> 8));
+                            bus.write8(--SP, static_cast<uint8_t>(PC & 0xFF));
+                            PC = nn;
+                        }
+                        break;
+                    default:
+                        break;
+                } 
+            }
+            else if(op == 0xC9){ // RET
+                uint8_t lsb = bus.read8(SP++);
+                uint8_t msb = bus.read8(SP++);
+                PC = (static_cast<uint16_t> (msb) << 8) | (lsb);
+            }
+            else if((op & 0b111) == 0 && ((op >> 5) & 0b111 ) == 6){ // RET cc
+                bool FLAG_Z;
+                bool FLAG_C;
+
+                if(F & (1 << 4)) FLAG_C = true;
+                else FLAG_C = false;
+                if(F & (1 << 7)) FLAG_Z = true;
+                else FLAG_Z = false;
+
+                switch (jp){
+                    case 0: 
+                        if(!FLAG_Z){
+                            uint8_t lsb = bus.read8(SP++);
+                            uint8_t msb = bus.read8(SP++);
+                            PC = (static_cast<uint16_t> (msb) << 8) | (lsb);
+                        }
+                        break;
+                    case 1:
+                        if(FLAG_Z){
+                            uint8_t lsb = bus.read8(SP++);
+                            uint8_t msb = bus.read8(SP++);
+                            PC = (static_cast<uint16_t> (msb) << 8) | (lsb);
+                        }
+                        break;
+                    case 2:
+                        if(!FLAG_C){
+                            uint8_t lsb = bus.read8(SP++);
+                            uint8_t msb = bus.read8(SP++);
+                            PC = (static_cast<uint16_t> (msb) << 8) | (lsb);
+                        }
+                        break;
+                    case 3:
+                        if(FLAG_C){
+                            uint8_t lsb = bus.read8(SP++);
+                            uint8_t msb = bus.read8(SP++);
+                            PC = (static_cast<uint16_t> (msb) << 8) | (lsb);
+                        }
+                        break;
+                    default:
+                        break;
+
+                }
+            }
+            else if(op == 0xD9){ // RETI 
+                uint8_t lsb = bus.read8(SP++);
+                uint8_t msb = bus.read8(SP++);
+                PC = (static_cast<uint16_t> (msb) << 8) | (lsb);
+                IME = true;
+            }
+            else if((op & 0b111) == 7 && ((op >> 6) & 0b11) == 3){ // RST n
+                uint8_t operand = rstreturn(dst);
+
+                bus.write8(--SP, static_cast<uint8_t>(PC >> 8));
+                bus.write8(--SP, static_cast<uint8_t>(PC & 0xFF));
+                PC = static_cast<uint16_t> (operand);
+            }
+            else if(op == 0xF3){
+                IME = false;
+            }
+            else if(op == 0xFB){
+                IME_next = true;
+            }
+            if(op == 0x00); // NOP (yes this is real)
+            break;       
+    }
 }
